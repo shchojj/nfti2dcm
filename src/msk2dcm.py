@@ -300,6 +300,10 @@ def mask_to_contours(mask, spacing, origin):
             image = rvolume[:, :, slice]
             # Get contours in this slice using scikit-image
             contours = measure.find_contours(image, 0.5)
+            approx_contours = []
+            for contour in contours:
+                approx_contours.append(measure.approximate_polygon(contour, 1))
+            contours = approx_contours
             # Save contours for later use
             for n, contour in enumerate(contours):
                 # print("n is ",n,"for slice ",slice)
@@ -322,6 +326,43 @@ def mask_to_contours(mask, spacing, origin):
         AllCoordinates.append(AllCoordinatesThisRoi)
     return AllCoordinates
 
+def mask_list_to_contours(mask_list, spacing, origin):
+    AllCoordinates = []
+    for mask in mask_list:
+        # print(ridx)
+        AllCoordinatesThisRoi = []
+        # Loop over slices in volume, get contours for each slice
+        for slice in range(mask.shape[2]):
+            AllCoordinatesThisSlice = []
+            image = mask[:, :, slice]
+            # Get contours in this slice using scikit-image
+            # contours = measure.find_contours(image, 0.5)
+            contours = measure.find_contours(image, 0.5)
+            approx_contours = []
+            for contour in contours:
+                approx_contours.append(measure.approximate_polygon(contour, 1))
+            contours = approx_contours
+            # Save contours for later use
+            for n, contour in enumerate(contours):
+                # print("n is ",n,"for slice ",slice)
+                nCoordinates = len(contour[:, 0])
+                # print("number of coordinates is ",len(contour[:,0])*3," for contour ",n," for slice ",slice)
+                zcoordinates = slice * np.ones((nCoordinates, 1))
+                # Add patient position offset
+                reg_contour = np.append(contour, zcoordinates, -1)
+                # Assume no other orientations for simplicity
+                reg_contour[:, 0] = reg_contour[:, 0] * spacing[0] + origin[0]
+                reg_contour[:, 1] = reg_contour[:, 1] * spacing[1] + origin[1]
+                reg_contour[:, 2] = reg_contour[:, 2] * spacing[2] + origin[2]
+                # Storing coordinates as mm instead of as voxels
+                # coordinates = concatenate_coordinates(contour[:,0] * xPixelSize, contour[:,1] * yPixelSize, zcoordinates * zPixelSize)
+                coordinates = concatenate_coordinates(*reg_contour.T)
+                coordinates = np.squeeze(coordinates)
+                AllCoordinatesThisSlice.append(coordinates)
+            AllCoordinatesThisRoi.append(AllCoordinatesThisSlice)
+        # print('AllCoordinatesThisRoi',len(AllCoordinatesThisRoi),rvolume.shape[2])
+        AllCoordinates.append(AllCoordinatesThisRoi)
+    return AllCoordinates
 
 def convert(input_nifti_path: str, input_dicom_path: str, output_dicom_path: str,struct_name: str='SS_1',roi_list: list =None):
     #####read mask
@@ -363,6 +404,54 @@ def convert(input_nifti_path: str, input_dicom_path: str, output_dicom_path: str
     new_struct_ds.SeriesInstanceUID = generate_uid()
     new_struct_ds.save_as(RTDCM_name, write_like_original=False)
 
+
+def convert_list(input_nifti_path: str, input_dicom_path: str, output_dicom_path: str,struct_name: str='SS_1',roi_list: list =None):
+    print('roi_list',roi_list)
+    mask_list = []
+    for roi_name in roi_list:
+        roi_path = os.path.join(input_nifti_path, roi_name+'.nii.gz')
+        print('roi_path',roi_path)
+        #####read mask
+        nii = nib.load(roi_path)
+        mask = nii.get_fdata()
+        mask_list.append(mask)
+        #####read dicom
+    dicomFiles = sorted(os.listdir(input_dicom_path))
+    dicomFiles = filter_rtss(input_dicom_path, dicomFiles)
+    # print(len(dicomFiles))
+    image_series_files = []
+    for filename in dicomFiles:
+        data = pydicom.read_file(os.path.join(input_dicom_path, "%s" % filename) , force=True)
+        data.file_meta.TransferSyntaxUID = pydicom.uid.ImplicitVRLittleEndian  # or whatever is the correct transfer syntax for the file
+        image_series_files.append(data)
+    image_series_files = ImagePositionPatientOrdering(image_series_files)
+    #### set dicom
+    RTDCM_name = os.path.join(output_dicom_path, "RTSTRUCT"+image_series_files[0].file_meta.MediaStorageSOPInstanceUID+".dcm")
+    new_struct_ds = create_rt_struct_ds(image_series_files, RTDCM_name, label=struct_name, name=struct_name)
+    ##### get geometry
+    xPixelSize = image_series_files[0].PixelSpacing[0]
+    yPixelSize = image_series_files[0].PixelSpacing[1]
+    zPixelSize = image_series_files[0].SliceThickness
+    patientPosition = image_series_files[0].ImagePositionPatient
+    patientStartingZ = image_series_files[0].ImagePositionPatient[2]
+    #####
+    spacing = [xPixelSize, yPixelSize, zPixelSize]
+    origin = [patientPosition[0], patientPosition[1], patientStartingZ]
+    AllCoordinates = mask_list_to_contours(mask_list, spacing, origin)
+    print('len(AllCoordinates)',len(AllCoordinates))
+    print('len(roi_list)',len(roi_list))
+    for ridx in range(len(AllCoordinates)):
+        if roi_list is not None and len(AllCoordinates) == len(roi_list):
+            roi_name = roi_list[ridx]
+        else:
+            print('roi_list',roi_list,len(AllCoordinates))
+            warnings.warn('The list of roi names is incorrect, so we use the default names such as ROI_0, ROI_1...')
+            roi_name = 'ROI_'+str(ridx)
+        roi = AllCoordinates[ridx]
+        color = list(np.random.choice(range(256), size=3))
+        add_contour(new_struct_ds, roi, roi_name, image_series_files,color)
+    new_struct_ds.SeriesInstanceUID = generate_uid()
+    new_struct_ds.save_as(RTDCM_name, write_like_original=False)
 
 if __name__ == "__main__":
     # dicom_series_path = r'../data/dcm/04539_GengYuYun'
