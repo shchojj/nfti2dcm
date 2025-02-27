@@ -4,3 +4,6 @@ In fact, there are many scripts of dicom to Nifti on the Internet, but when I ne
 Image is converted into dicom code reference https://simpleitk.readthedocs.io/en/v1.1.0/Examples/DicomSeriesReadModifyWrite/Documentation.html
 The label into dicom code reference https://github.com/Abe404/mask_to_dicom_rtstruct
 Thanks to these authors.
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=shchojj/nfti2dcm&type=Date)](https://star-history.com/#shchojj/nfti2dcm&Date)
